@@ -674,7 +674,13 @@ func (e *Engine) runOutputInput(ctx context.Context, binary string, args []strin
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	cmd := exec.CommandContext(ctx, binary, args...)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Not exec.CommandContext: os/exec would stop the process with
+	// os.Process.Kill, which can crash the server on Android (see
+	// killProcess). Cancellation is attached after Start instead.
+	cmd := exec.Command(binary, args...)
 	cmd.Stdin = input
 	cmd.WaitDelay = 2 * time.Second
 	stderr := &limitedBuffer{limit: 64 << 10}
@@ -698,7 +704,9 @@ func (e *Engine) runOutputInput(ctx context.Context, binary string, args []strin
 		sideWriter.Close()
 	}
 	if err == nil {
+		stop := context.AfterFunc(ctx, func() { _ = killProcess(cmd.Process) })
 		err = cmd.Wait()
+		stop()
 	}
 	if sideDone != nil {
 		if sideErr := <-sideDone; err == nil {
