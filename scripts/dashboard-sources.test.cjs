@@ -8,6 +8,7 @@ const app = fs.readFileSync(path.join(__dirname, '../internal/dublift/web/app.js
 // Exercise the production source-card handlers and save queue in a small DOM
 // fixture. This needs no browser, third-party modules, or live provider access.
 const sourceCode = app.slice(0, app.indexOf('const inPlaybackSection'));
+const manifestOptionsCode = app.slice(app.indexOf('function renderManifestOptions('), app.indexOf('$("copy-manifest-local")'));
 const configCode = app.slice(app.indexOf('async function saveConfig('), app.indexOf('$("settings-form").onsubmit'));
 const addCode = app.slice(app.indexOf('for (const [buttonID, containerID]'), app.indexOf('async function saveConfig('));
 const finishCode = app.slice(app.indexOf('async function finishWizard('), app.indexOf('$("wizard-next").onclick'));
@@ -58,6 +59,7 @@ class Element {
   set src(value) { this.imageURL = value; this.srcAssignments = (this.srcAssignments || 0) + 1; }
   get src() { return this.imageURL; }
   setAttribute(name, value) { this[name] = value; }
+  getAttribute(name) { return this[name]; }
   addEventListener(name, callback) { this.listeners[name] = callback; }
   querySelector(selector) {
     for (const child of this.children) {
@@ -74,13 +76,58 @@ class Element {
   }
 }
 
+function manifestOptionsFixture() {
+  const ids = new Map();
+  for (const id of ['manifest-local', 'manifest-lan', 'copy-manifest-lan', 'install-local', 'install-lan', 'manifest-lan-unavailable']) {
+    ids.set(id, new Element(id.startsWith('install-') ? 'a' : 'input'));
+  }
+  const context = vm.createContext({
+    document: { getElementById: id => ids.get(id) },
+  });
+  vm.runInContext(`const $ = (id) => document.getElementById(id); ${manifestOptionsCode}`, context);
+  return {
+    id: id => ids.get(id),
+    render: state => {
+      context.status = state;
+      vm.runInContext('renderManifestOptions(status)', context);
+    },
+  };
+}
+
+test('LAN install option stays unavailable when no LAN URL was detected', () => {
+  const ui = manifestOptionsFixture();
+  ui.render({
+    manifestURL: 'http://localhost:7000/manifest.json',
+    localManifestURL: 'http://localhost:7000/manifest.json',
+    lanManifestURL: '',
+  });
+
+  assert.equal(ui.id('manifest-lan').value, '');
+  assert.equal(ui.id('manifest-lan').disabled, true);
+  assert.equal(ui.id('copy-manifest-lan').disabled, true);
+  assert.equal(ui.id('install-lan').href, '#');
+  assert.equal(ui.id('install-lan').getAttribute('aria-disabled'), 'true');
+  assert.equal(ui.id('manifest-lan-unavailable').hidden, false);
+
+  ui.render({
+    manifestURL: 'http://localhost:7000/manifest.json',
+    localManifestURL: 'http://localhost:7000/manifest.json',
+    lanManifestURL: 'http://192.168.1.10:7000/manifest.json',
+  });
+  assert.equal(ui.id('manifest-lan').value, 'http://192.168.1.10:7000/manifest.json');
+  assert.equal(ui.id('manifest-lan').disabled, false);
+  assert.equal(ui.id('copy-manifest-lan').disabled, false);
+  assert.equal(ui.id('install-lan').getAttribute('aria-disabled'), 'false');
+  assert.equal(ui.id('manifest-lan-unavailable').hidden, true);
+});
+
 function fixture(sources = [vix], options = {}) {
   const body = new Element('body'); body.connected = true;
   const ids = new Map();
   for (const id of ['sources', 'wizard-sources', 'add-source', 'wizard-add-source', 'wizard-next', 'wizard-error', 'toast', 'cache-mb']) {
     const el = new Element('div'); ids.set(id, el); body.append(el);
   }
-  let stored = { configVersion: 1, cacheMB: 256, minConfidence: 0.68, setupCompleted: false, sources: clone(sources) };
+  let stored = { configVersion: 2, cacheMB: 256, minConfidence: 0.68, setupCompleted: false, sources: clone(sources) };
   let gate, manifestGate, failSave = false, rejectManifest = !!options.rejectManifest, active = 0, maxActive = 0;
   const writes = [];
   const manifestRequests = [];
@@ -102,7 +149,7 @@ function fixture(sources = [vix], options = {}) {
       assert.ok(completing || url === '/api/settings');
       const candidate = completing ? { ...clone(stored), setupCompleted: true } : { ...clone(data), setupCompleted: stored.setupCompleted };
       if (!completing) {
-        assert.equal(data.configVersion, 1, 'settings saves must preserve the config version');
+        assert.equal(data.configVersion, 2, 'settings saves must preserve the config version');
         writes.push(clone(data));
       }
       active++; maxActive = Math.max(maxActive, active);

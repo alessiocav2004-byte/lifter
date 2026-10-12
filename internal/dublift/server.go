@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -25,6 +26,7 @@ var dashboard embed.FS
 
 type Server struct {
 	Config           *Config
+	listenAddr       string
 	Net              *Network
 	Engine           *Engine
 	videoPrefetch    chan struct{}
@@ -55,6 +57,7 @@ func (s *Server) settingsResponse(settings Settings) dashboardSettings {
 }
 
 func NewServer(c *Config) (*Server, error) {
+	listenAddr := c.Get().Listen
 	key, err := openPlaybackKey(c.path)
 	if err != nil {
 		return nil, err
@@ -70,7 +73,7 @@ func NewServer(c *Config) (*Server, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{Config: c, Net: n, Engine: e, Alignments: a, sessions: map[string]*Session{}, events: []string{}, ctx: ctx, cancel: cancel, playbackKey: key, videoPrefetch: make(chan struct{}, 1)}
+	s := &Server{Config: c, listenAddr: listenAddr, Net: n, Engine: e, Alignments: a, sessions: map[string]*Session{}, events: []string{}, ctx: ctx, cancel: cancel, playbackKey: key, videoPrefetch: make(chan struct{}, 1)}
 	s.collectExpired(time.Now())
 	go s.collectLoop()
 	return s, nil
@@ -89,10 +92,56 @@ func (s *Server) base(r *http.Request) string {
 		return strings.TrimRight(base, "/")
 	}
 	scheme := "http"
-	if r.TLS != nil {
+	if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+		if first := strings.TrimSpace(strings.Split(proto, ",")[0]); strings.EqualFold(first, "https") {
+			scheme = "https"
+		}
+	} else if r.TLS != nil {
 		scheme = "https"
 	}
-	return scheme + "://" + r.Host
+
+	host := ""
+	if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); fwd != "" {
+		host = strings.TrimSpace(strings.Split(fwd, ",")[0])
+	}
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" {
+		if addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && addr != nil {
+			host = normalizeHost(addr.String())
+		}
+	}
+	if host == "" {
+		host = normalizeHost(s.Config.Get().Listen)
+	}
+	if host == "" {
+		host = "127.0.0.1:7000"
+	}
+	return scheme + "://" + strings.TrimRight(host, "/")
+}
+
+func normalizeHost(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	h, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		if !strings.Contains(addr, ":") {
+			h = addr
+			p = "7000"
+		} else {
+			return addr
+		}
+	}
+	if h == "0.0.0.0" || h == "" || h == "::" {
+		h = "127.0.0.1"
+	}
+	if p == "" {
+		p = "7000"
+	}
+	return net.JoinHostPort(h, p)
 }
 func jsonResponse(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -354,7 +403,26 @@ func (s *Server) status(r *http.Request) map[string]any {
 			sources = append(sources, source.dashboardSource())
 		}
 	}
-	return map[string]any{"sessions": snapshots, "sources": sources, "redirectOriginal": s.redirectOriginal.Load(), "lookupStatus": lookupStatus, "events": events, "cacheBytes": s.Engine.Cache.Used(), "cacheMaxBytes": int64(cfg.CacheMB) << 20, "originBytes": s.Net.Bytes.Load(), "manifestURL": s.base(r) + "/manifest.json", "manifestRequests": s.manifestRequests.Load()}
+	port := listenPort(s.listenAddr)
+	lanManifestURL := ""
+	if lan := detectedLANURL(s.listenAddr); lan != "" {
+		lanManifestURL = lan + "/manifest.json"
+	}
+	localManifestURL := localManifestURLForListen(s.listenAddr, port)
+	return map[string]any{
+		"sessions":         snapshots,
+		"sources":          sources,
+		"redirectOriginal": s.redirectOriginal.Load(),
+		"lookupStatus":     lookupStatus,
+		"events":           events,
+		"cacheBytes":       s.Engine.Cache.Used(),
+		"cacheMaxBytes":    int64(cfg.CacheMB) << 20,
+		"originBytes":      s.Net.Bytes.Load(),
+		"manifestURL":      s.base(r) + "/manifest.json",
+		"lanManifestURL":   lanManifestURL,
+		"localManifestURL": localManifestURL,
+		"manifestRequests": s.manifestRequests.Load(),
+	}
 }
 
 func streamSourceFormat(stream Stream, asset *Asset) string {

@@ -577,7 +577,26 @@ $("settings-form").onsubmit = async (e) => {
     toast(err.message);
   }
 };
-$("copy-manifest").onclick = () => copy($("manifest").value);
+function renderManifestOptions(state) {
+  const localManifest = state.localManifestURL || state.manifestURL || "";
+  if ($("manifest-local").value !== localManifest) $("manifest-local").value = localManifest;
+  $("install-local").href = localManifest.replace(/^https?:\/\//, "stremio://");
+
+  const lanManifest = state.lanManifestURL || "";
+  const lanAvailable = Boolean(lanManifest);
+  if ($("manifest-lan").value !== lanManifest) $("manifest-lan").value = lanManifest;
+  $("manifest-lan").disabled = !lanAvailable;
+  $("copy-manifest-lan").disabled = !lanAvailable;
+  $("install-lan").href = lanAvailable ? lanManifest.replace(/^https?:\/\//, "stremio://") : "#";
+  $("install-lan").classList.toggle("disabled", !lanAvailable);
+  $("install-lan").setAttribute("aria-disabled", String(!lanAvailable));
+  $("install-lan").tabIndex = lanAvailable ? 0 : -1;
+  $("manifest-lan-unavailable").hidden = lanAvailable;
+}
+$("copy-manifest-local").onclick = () => copy($("manifest-local").value);
+$("copy-manifest-lan").onclick = () => {
+  if ($("manifest-lan").value) copy($("manifest-lan").value);
+};
 function showView(view) {
   $("streams-view").hidden = view !== "streams";
   $("settings-view").hidden = view !== "settings";
@@ -946,8 +965,7 @@ function renderStatus(state) {
     if (!$("redirect-original").disabled) $("redirect-original").checked = !!state.redirectOriginal;
     setText($("connection"), "Connected to local server");
     $("connection-dot").classList.remove("offline");
-    if ($("manifest").value !== state.manifestURL) $("manifest").value = state.manifestURL;
-    $("install").href = state.manifestURL.replace(/^https?:\/\//, "stremio://");
+    renderManifestOptions(state);
     setText($("session-count"), `${state.sessions.filter(v => v.playing).length} / ${state.sessions.length}`);
     setText($("lookup-status"), state.lookupStatus || "Waiting for an addon request or a title lookup.");
     setText($("cache-size"), `${mb(state.cacheBytes)} / ${mb(state.cacheMaxBytes)}`);

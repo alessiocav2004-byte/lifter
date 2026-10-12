@@ -32,10 +32,23 @@
         <div class="wizard-steps" aria-hidden="true"><span>Install</span><span>Sources</span></div>
         <div class="wizard-step" data-step="0">
           <h3>Install DubLift on Nuvio/Stremio</h3>
-          <div class="copy-row">
-            <input id="manifest" readonly aria-label="Addon manifest URL" />
-            <button id="copy-manifest" class="icon-button" type="button">Copy</button>
-            <a id="install" class="button primary" href="#">Install in Nuvio ↗</a>
+          <p class="help">Choose the manifest URL for your player setup:</p>
+          <div class="manifest-option">
+            <label><strong>This computer (Localhost)</strong><small>Ideal for playing media on the same machine where DubLift runs.</small></label>
+            <div class="copy-row">
+              <input id="manifest-local" readonly aria-label="Localhost addon manifest URL" />
+              <button id="copy-manifest-local" class="icon-button" type="button">Copy</button>
+              <a id="install-local" class="button primary" href="#">Install in Nuvio ↗</a>
+            </div>
+          </div>
+          <div class="manifest-option">
+            <label><strong>Local Network (LAN)</strong><small>Required for Smart TVs, mobile devices, or when Stremio syncs addons across multiple devices.</small></label>
+            <p id="manifest-lan-unavailable" class="help" hidden>No LAN address is available. Check the listen address and network connection, or use the server's LAN address manually.</p>
+            <div class="copy-row">
+              <input id="manifest-lan" readonly aria-label="Local network addon manifest URL" placeholder="No LAN address detected" />
+              <button id="copy-manifest-lan" class="icon-button" type="button">Copy</button>
+              <a id="install-lan" class="button primary" href="#">Install in Nuvio ↗</a>
+            </div>
           </div>
           <p class="help install-warning"><strong>Stremio doesn't allow adding HTTP addons directly.</strong> Use <a class="inline-link" href="https://gateniomer.github.io/stremio-addon-manager/" target="_blank" rel="noopener noreferrer">Stremio Addon Manager ↗</a> to sync the addon to your Stremio account.</p>
         </div>
@@ -234,11 +247,13 @@
             <details>
               <summary>Advanced settings</summary>
               <label
-                >Public base URL<input
+                >Public base URL (Optional override)<input
                   id="public-url"
                   type="url"
                   placeholder="http://192.168.1.20:7000" /></label
-              ><label id="app-listen-setting" hidden
+              >
+              <p class="help">Optional override. Leave blank for automatic detection. DubLift automatically uses the URL your player reaches it with. Do NOT set this unless you know what it does (e.g. a reverse proxy that does not pass standard host headers).</p>
+              <label id="app-listen-setting" hidden
                 >Listen address <small>Requires restart</small
                 ><input id="listen" /></label
               ><label

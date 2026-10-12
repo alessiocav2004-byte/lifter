@@ -60,20 +60,27 @@ The base URL controls Movy's title pages and player origin;
 its source and subtitle services are handled by the built-in scraper.
 Only supported file/HLS sources are listed; DASH and DRM sources are excluded.
 
-The config stores `configVersion` (currently `1`) and an ordered `sources`
-array. On startup, a missing or unsupported version replaces the entire
-config with current defaults and starts the setup wizard again. No config
-migrations are currently available.
+The config stores `configVersion` (currently `2`) and an ordered `sources`
+array. On startup, older supported configs execute sequential migrations
+(`v1 -> v2` preserves all user settings and resets `publicURL` to empty for
+dynamic client resolution). Missing or unsupported versions replace the entire
+config with current defaults and start the setup wizard again.
 
 ```sh
 ./bin/dublift -config /path/to/private/config.json
-./bin/dublift -listen 127.0.0.1:7000
+./bin/dublift --app-listen 127.0.0.1:7000
 ```
 
-**Public base URL** controls the advertised manifest and playback URLs. It
-defaults to a LAN IPv4 address when one is available. Check it when using
-another device, changing the port, or moving networks. Restricting the listen
-address to loopback makes the server accessible only on its own machine.
+`--app-listen` sets and locks the listen address for a host-managed launch. For
+standalone use, change the listen address in Settings and restart DubLift.
+
+**Public base URL** is an optional override in Advanced Settings (defaulting to
+empty). When left blank, DubLift dynamically resolves base URLs from incoming
+player request headers (`Host`, `X-Forwarded-*`), enabling simultaneous playback
+across localhost, local network (LAN), VPNs (e.g. Tailscale), and reverse proxies
+without reconfiguration when DHCP IPs change. Set an explicit base URL only when
+behind a reverse proxy that does not forward standard host headers. Restricting
+the listen address to loopback makes the server accessible only on its own machine.
 
 Config, `alignment.json`, and `playback.key` contain private state and live
 beside each other. The config and key use file mode `0600`; do not share them
@@ -153,8 +160,9 @@ there is no whole-title download or disk media cache.
   speed below the video's bitrate, quotas, or expired URLs can interrupt
   playback even if preparation succeeds. `Idle` means no video request is
   active; `0.00 Mbps` means a request is active without recent received bytes.
-- **Another device cannot connect:** verify the LAN address, port, firewall,
-  and Public base URL. The player must reach the server throughout playback.
+- **Another device cannot connect:** verify the host's LAN address, port,
+  firewall, and network reachability. If an optional Public base URL override is
+  configured, ensure it is reachable by the player. The player must reach the server throughout playback.
 
 For Android installation and app lifecycle help, use
 [DubLiftApp](https://github.com/joojoooo/DubLiftApp). For contributor checks,

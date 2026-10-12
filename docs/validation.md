@@ -92,7 +92,7 @@ success, decode playback, or download complete titles. Keep reports private.
 - Play through Stremio/Nuvio and VLC: verify video and Italian audio at
   startup, after forward/backward seeks, and after timing changes. Refresh
   results during playback and select a different stream to check lifecycle.
-- Test from another LAN device with a reachable Public base URL. Check real
+- Test from another LAN device with dynamic LAN address or configured Public base URL. Check real
   codecs/HDR, long playback, and slow or failing providers on target players.
 
 Automated tests do not cover browser rendering, physical Stremio/Nuvio

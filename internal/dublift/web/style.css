@@ -36,6 +36,11 @@ button,
 a.button {
   cursor: pointer;
 }
+a.button.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -156,6 +161,15 @@ h3 {
   border-radius: 14px;
   background: var(--panel);
   padding: 24px;
+}
+.manifest-option {
+  margin-top: 16px;
+}
+.manifest-option label {
+  margin-top: 0;
+}
+.manifest-option .copy-row {
+  margin: 8px 0 14px;
 }
 .copy-row {
   display: grid;

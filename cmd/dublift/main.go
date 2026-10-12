@@ -15,7 +15,6 @@ import (
 
 func main() {
 	path := flag.String("config", ".local/config.json", "private settings file")
-	listen := flag.String("listen", "", "override listen address")
 	appListen := flag.String("app-listen", "", "application-managed listen address")
 	appFFmpeg := flag.String("app-ffmpeg", "", "application-managed FFmpeg executable")
 	appFFprobe := flag.String("app-ffprobe", "", "application-managed ffprobe executable")
@@ -39,9 +38,6 @@ func main() {
 	}
 	defer s.Close()
 	addr := c.Get().Listen
-	if *listen != "" {
-		addr = *listen
-	}
 	srv := &http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

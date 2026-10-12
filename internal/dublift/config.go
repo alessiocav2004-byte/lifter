@@ -15,8 +15,8 @@ import (
 )
 
 // Bump this when the config format changes. Unsupported versions reset to
-// defaults; there are currently no config migrations.
-const currentConfigVersion = 1
+// defaults; older supported versions execute sequential migrations.
+const currentConfigVersion = 2
 
 type Source struct {
 	Type        string `json:"type"`
@@ -43,17 +43,76 @@ type Settings struct {
 }
 
 func DefaultSettings() Settings {
-	return Settings{ConfigVersion: currentConfigVersion, Listen: "0.0.0.0:7000", PublicURL: defaultPublicURL(), MinConfidence: .68, SearchRadius: 10, AlignmentSampleSeconds: 5, AlignmentSamples: 1, CacheMB: 256, FFmpeg: "ffmpeg", FFprobe: "ffprobe", Sources: defaultSources()}
+	return Settings{
+		ConfigVersion:          currentConfigVersion,
+		Listen:                 "0.0.0.0:7000",
+		PublicURL:              "",
+		MinConfidence:          .68,
+		SearchRadius:           10,
+		AlignmentSampleSeconds: 5,
+		AlignmentSamples:       1,
+		CacheMB:                256,
+		FFmpeg:                 "ffmpeg",
+		FFprobe:                "ffprobe",
+		Sources:                defaultSources(),
+	}
 }
 
-func defaultPublicURL() string {
+func detectedLANURL(listen string) string {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil || port == "" {
+		return ""
+	}
+	if strings.EqualFold(host, "localhost") {
+		return ""
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		if ip.IsLoopback() {
+			return ""
+		}
+		if !ip.IsUnspecified() {
+			return "http://" + net.JoinHostPort(ip.String(), port)
+		}
+	}
+	if host != "" && host != "0.0.0.0" && host != "::" {
+		return "http://" + net.JoinHostPort(host, port)
+	}
+	ip := detectedLANIP()
+	if ip == "" {
+		return ""
+	}
+	return "http://" + net.JoinHostPort(ip, port)
+}
+
+func localManifestURLForListen(listen, port string) string {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil || host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		host = ip.String()
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/manifest.json"
+}
+
+func listenPort(listen string) string {
+	if _, p, err := net.SplitHostPort(listen); err == nil && p != "" {
+		return p
+	}
+	if listen != "" && !strings.Contains(listen, ":") {
+		return listen
+	}
+	return "7000"
+}
+
+func detectedLANIP() string {
 	// A UDP dial selects the interface used for the default route without sending a packet.
 	conn, err := net.Dial("udp4", "192.0.2.1:80")
 	if err == nil {
 		ip := conn.LocalAddr().(*net.UDPAddr).IP
 		conn.Close()
 		if ip.IsPrivate() {
-			return "http://" + ip.String() + ":7000"
+			return ip.String()
 		}
 	}
 	interfaces, err := net.Interfaces()
@@ -70,11 +129,41 @@ func defaultPublicURL() string {
 		}
 		for _, addr := range addrs {
 			if network, ok := addr.(*net.IPNet); ok && network.IP.To4() != nil && network.IP.IsPrivate() {
-				return "http://" + network.IP.String() + ":7000"
+				return network.IP.String()
 			}
 		}
 	}
 	return ""
+}
+
+type configMigration func(data map[string]any) error
+
+var configMigrations = map[int]configMigration{
+	1: migrateV1ToV2,
+}
+
+func migrateV1ToV2(data map[string]any) error {
+	data["publicURL"] = ""
+	data["configVersion"] = 2
+	return nil
+}
+
+func migrateConfig(data map[string]any, fromVersion, toVersion int) (map[string]any, bool) {
+	if fromVersion >= toVersion {
+		return data, false
+	}
+	current := fromVersion
+	for current < toVersion {
+		migration, ok := configMigrations[current]
+		if !ok {
+			return nil, false
+		}
+		if err := migration(data); err != nil {
+			return nil, false
+		}
+		current++
+	}
+	return data, true
 }
 
 func httpURL(raw string) (*url.URL, error) {
@@ -147,15 +236,45 @@ func OpenConfigWithOptions(path string, options ConfigOptions) (*Config, error) 
 	}
 	// Read the version before decoding settings: an unsupported format may use
 	// incompatible field types and must be replaced as a whole.
-	var header struct {
-		ConfigVersion json.RawMessage `json:"configVersion"`
-	}
-	if e = json.Unmarshal(b, &header); e != nil {
-		return nil, e
-	}
-	var version int
-	if e = json.Unmarshal(header.ConfigVersion, &version); e != nil || version != currentConfigVersion {
+	var raw map[string]any
+	if e = json.Unmarshal(b, &raw); e != nil || raw == nil {
 		return c, c.Save(c.value)
+	}
+	verVal, ok := raw["configVersion"]
+	if !ok || verVal == nil {
+		return c, c.Save(c.value)
+	}
+	verFloat, ok := verVal.(float64)
+	if !ok || verFloat != math.Trunc(verFloat) || math.IsNaN(verFloat) || math.IsInf(verFloat, 0) {
+		return c, c.Save(c.value)
+	}
+	version := int(verFloat)
+	if version > currentConfigVersion || version <= 0 {
+		return c, c.Save(c.value)
+	}
+	if version < currentConfigVersion {
+		migrated, ok := migrateConfig(raw, version, currentConfigVersion)
+		if !ok {
+			return c, c.Save(c.value)
+		}
+		migratedBytes, err := json.Marshal(migrated)
+		if err != nil {
+			return c, c.Save(c.value)
+		}
+		var candidate Settings
+		candidate.Sources = nil
+		if err := json.Unmarshal(migratedBytes, &candidate); err != nil {
+			return c, c.Save(c.value)
+		}
+		candidate = candidate.normalizedSources()
+		options.applyManaged(&candidate)
+		if err := candidate.Validate(); err != nil {
+			return c, c.Save(c.value)
+		}
+		if err := c.Save(candidate); err != nil {
+			return nil, err
+		}
+		return c, nil
 	}
 	c.value.Sources = nil
 	if e = json.Unmarshal(b, &c.value); e != nil {

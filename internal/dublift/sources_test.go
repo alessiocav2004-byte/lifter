@@ -3,6 +3,7 @@ package dublift
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -148,7 +149,7 @@ func TestSourceSettingsAPIAndFixedIcon(t *testing.T) {
 		"legacy fields":       []byte(`{"addons":[],"vixBaseURL":"https://legacy.test"}`),
 		"missing version":     unversioned,
 		"unsupported version": unsupported,
-		"removed built-in":    []byte(`{"configVersion":1,"sources":[]}`),
+		"removed built-in":    []byte(fmt.Sprintf(`{"configVersion":%d,"sources":[]}`, currentConfigVersion)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			req = httptest.NewRequest("POST", "/api/settings", bytes.NewReader(body))
