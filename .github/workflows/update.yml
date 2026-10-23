@@ -22,7 +22,7 @@ jobs:
       - name: Sync upstream changes
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
         with:
-          upstream_sync_repo: qwertyuiop8899/toastflix-sidecar
+          upstream_sync_repo: joojoooo/DubLift
           upstream_sync_branch: main
           target_sync_branch: main
           target_repo_token: ${{ secrets.GITHUB_TOKEN }}
