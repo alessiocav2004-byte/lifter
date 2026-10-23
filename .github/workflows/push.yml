@@ -1,45 +1,157 @@
-name: Build & Push Docker Image
+
+name: Build and Publish DubLift
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
 
+  workflow_run:
+    workflows:
+      - Push Upstream Daily
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: alessiocav2004-byte/lifter
+  UPSTREAM_REPO: joojoooo/DubLift
+
 jobs:
-  build-and-push:
+  check:
+    name: Check upstream
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    
-    permissions:
-      contents: read
-      packages: write
+
+    outputs:
+      sha: ${{ steps.upstream.outputs.sha }}
+      build: ${{ steps.decision.outputs.build }}
 
     steps:
-      - name: Scarica il codice
+      - name: Checkout fork
         uses: actions/checkout@v4
+        with:
+          ref: main
 
-      # Configura l'emulatore per compilare per ARM64 (Oracle Cloud Ampere)
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Get upstream SHA
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA=$(gh api "repos/${UPSTREAM_REPO}/commits/main" --jq '.sha')
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Upstream SHA: $SHA"
 
-      # Configura il sistema di build avanzato di Docker
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Calculate Dockerfile hash
+        id: dockerfile
+        run: |
+          HASH=$(sha256sum Dockerfile | cut -d' ' -f1)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
 
-      - name: Login al GitHub Container Registry (GHCR)
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compila e Carica l'immagine
-        uses: docker/build-push-action@v5
+      - name: Check if image exists
+        id: image
+        env:
+          SHA: ${{ steps.upstream.outputs.sha }}
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:${SHA}"
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compare Dockerfile hash
+        id: compare
+        if: steps.image.outputs.exists == 'true'
+        env:
+          SHA: ${{ steps.upstream.outputs.sha }}
+          HASH: ${{ steps.dockerfile.outputs.hash }}
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:${SHA}"
+          docker pull "$IMAGE" >/dev/null
+          OLD_HASH=$(docker inspect "$IMAGE" \
+            --format '{{ index .Config.Labels "org.opencontainers.image.dockerfile.hash" }}' \
+            2>/dev/null || true)
+
+          if [ "$OLD_HASH" != "$HASH" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decide whether to build
+        id: decision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IMAGE_EXISTS: ${{ steps.image.outputs.exists }}
+          DOCKERFILE_CHANGED: ${{ steps.compare.outputs.changed }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif [ "$IMAGE_EXISTS" != "true" ] || [ "$DOCKERFILE_CHANGED" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build and publish
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate Dockerfile hash
+        id: dockerfile
+        run: |
+          HASH=$(sha256sum Dockerfile | cut -d' ' -f1)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
-          # Compila per PC (x86_64) e per Oracle Cloud ARM64 (aarch64)
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            DUBLIFT_SHA=${{ needs.check.outputs.sha }}
+          labels: |
+            org.opencontainers.image.dockerfile.hash=${{ steps.dockerfile.outputs.hash }}
+            org.opencontainers.image.source=https://github.com/joojoooo/DubLift
           tags: |
+            ghcr.io/alessiocav2004-byte/lifter:${{ needs.check.outputs.sha }}
             ghcr.io/alessiocav2004-byte/lifter:main
             ghcr.io/alessiocav2004-byte/lifter:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
