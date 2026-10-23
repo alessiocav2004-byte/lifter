@@ -1,57 +1,45 @@
-
-name: Push
+name: Build & Push Docker Image
 
 on:
-  schedule:
-    - cron: '0 4 * * *'
+  push:
+    branches: [ "main" ]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  sync:
+  build-and-push:
     runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Checkout fork
+      - name: Scarica il codice
         uses: actions/checkout@v4
+
+      # Configura l'emulatore per compilare per ARM64 (Oracle Cloud Ampere)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Configura il sistema di build avanzato di Docker
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login al GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
         with:
-          ref: main
-          fetch-depth: 0
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Check upstream updates
-        id: check
-        if: github.event_name == 'schedule'
-        run: |
-          git remote add upstream https://github.com/joojoooo/DubLift.git
-          git fetch upstream main
-
-          if git merge-base HEAD upstream/main >/dev/null 2>&1; then
-            if git merge-base --is-ancestor upstream/main HEAD; then
-              echo "updated=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "updated=true" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Fetch upstream for manual run
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git remote add upstream https://github.com/joojoooo/DubLift.git
-          git fetch upstream main
-
-      - name: Sync upstream
-        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.updated == 'true'
-        run: |
-          git merge --no-edit --allow-unrelated-histories upstream/main
-
-      - name: Push changes
-        if: github.event_name == 'workflow_dispatch' || steps.check.outputs.updated == 'true'
-        run: git push origin HEAD:main
+      - name: Compila e Carica l'immagine
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          # Compila per PC (x86_64) e per Oracle Cloud ARM64 (aarch64)
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/alessiocav2004-byte/macchina:main
+            ghcr.io/alessiocav2004-byte/macchina:latest
