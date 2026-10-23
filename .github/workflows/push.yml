@@ -6,7 +6,7 @@ on:
 
   workflow_run:
     workflows:
-      - Push Upstream Daily
+      - Sync Upstream Daily
     types:
       - completed
     branches:
@@ -60,7 +60,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check if image exists
+      - name: Check upstream image
         id: image
         env:
           SHA: ${{ steps.upstream.outputs.sha }}
