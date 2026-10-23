@@ -41,5 +41,5 @@ jobs:
           # Compila per PC (x86_64) e per Oracle Cloud ARM64 (aarch64)
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/alessiocav2004-byte/macchina:main
-            ghcr.io/alessiocav2004-byte/macchina:latest
+            ghcr.io/alessiocav2004-byte/lifter:main
+            ghcr.io/alessiocav2004-byte/lifter:latest
